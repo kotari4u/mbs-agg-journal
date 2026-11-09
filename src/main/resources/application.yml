@@ -1,0 +1,67 @@
+# The original environment variables still work (KAFKA_BOOTSTRAP, REDIS_HOST, JOURNAL_TOPIC, FLUSH_EVERY, ...);
+# every setting can also be given the Spring Boot way (MBSAGG_AGGREGATOR_FLUSH_EVERY, --mbsagg.zone=..., etc.).
+# Activate a role with --spring.profiles.active=sequencer or aggregator (or both).
+
+spring:
+  application:
+    name: mbs-agg-journal
+  main:
+    web-application-type: none
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      repositories:
+        enabled: false   # plain StringRedisTemplate + Lua scripts, no @RedisHash repositories
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      # the journal is written in Kafka transactions: never read aborted or open ones
+      isolation-level: read-committed
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Turns on Kafka transactions and makes Boot auto-configure the KafkaTransactionManager. Must be unique per pod:
+      # two pods with the same prefix would fence each other.
+      transaction-id-prefix: mbs-${POD_NAME:${HOSTNAME:local}}-
+      properties:
+        enable.idempotence: true
+        linger.ms: 5
+
+mbsagg:
+  zone: ${ZONE:America/New_York}
+  rollover: "${ROLLOVER:00:00}"
+  topics:
+    position: ${POSITION_TOPIC:mbs.positions}
+    price: ${PRICE_TOPIC:mbs.prices}
+    risk: ${RISK_TOPIC:mbs.risk}
+    assumption: ${ASSUMPTION_TOPIC:mbs.assumptions}
+    journal: ${JOURNAL_TOPIC:mbs.journal}
+    output: ${OUTPUT_TOPIC:mbs.containers}
+  aggregator:
+    group-id: mbs-aggregator
+    instance-id: ${POD_NAME:${HOSTNAME:local}}
+    flush-every: ${FLUSH_EVERY:500}
+    flush-interval: ${FLUSH_MS:100}ms
+    poll-timeout: 20ms
+    start-of-day-margin: 10m
+  sequencer:
+    group-id: mbs-sequencer
+    dead-letter-topic: ${DEAD_LETTER_TOPIC:}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: sequencer
+  kafka:
+    producer:
+      properties:
+        linger.ms: 2
